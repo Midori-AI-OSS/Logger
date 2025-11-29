@@ -3,6 +3,7 @@
 import asyncio
 import aiohttp
 import atexit
+import threading
 
 from typing import Any
 from typing import List
@@ -23,14 +24,16 @@ _GLOBAL_LOGGER_CONFIG = load_logger_config()
 # Module-level shared session for connection pooling
 _shared_session: Optional[aiohttp.ClientSession] = None
 _session_lock: Optional[asyncio.Lock] = None
+_init_lock = threading.Lock()
 
 
 def _get_lock() -> asyncio.Lock:
-    """Get or create a lock for the current event loop."""
+    """Get or create a lock for the current event loop (thread-safe)."""
     global _session_lock
-    if _session_lock is None:
-        _session_lock = asyncio.Lock()
-    return _session_lock
+    with _init_lock:
+        if _session_lock is None:
+            _session_lock = asyncio.Lock()
+        return _session_lock
 
 
 async def _get_shared_session() -> aiohttp.ClientSession:
@@ -59,13 +62,17 @@ def _cleanup_session() -> None:
     if _shared_session is not None and not _shared_session.closed:
         try:
             loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-        try:
             loop.run_until_complete(_shared_session.close())
         except RuntimeError:
-            # Event loop is closed or cannot run
-            pass
+            # No running event loop - create a temporary one for cleanup
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(_shared_session.close())
+            except RuntimeError:
+                # Event loop cannot run cleanup
+                pass
+            finally:
+                loop.close()
         _shared_session = None
 
 
