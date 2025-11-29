@@ -61,10 +61,10 @@ def _cleanup_session() -> None:
     global _shared_session
     if _shared_session is not None and not _shared_session.closed:
         try:
-            # Check if there's a running loop - if so, we cannot use run_until_complete
-            asyncio.get_running_loop()
-            # A loop is running; schedule cleanup but we can't wait for it
-            # This is a rare edge case during atexit
+            # Check if there's a running loop
+            loop = asyncio.get_running_loop()
+            # Schedule cleanup on the running loop (fire-and-forget during atexit)
+            loop.create_task(_shared_session.close())
         except RuntimeError:
             # No running event loop - create a temporary one for cleanup
             loop = asyncio.new_event_loop()
