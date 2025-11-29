@@ -1,8 +1,8 @@
 """Logger for sending log messages to the logging server."""
 
+import atexit
 import asyncio
 import aiohttp
-import atexit
 import threading
 
 from typing import Any
@@ -13,8 +13,8 @@ from rich.console import Console
 
 from .enums import LogLevel
 
-from .config import load_logger_config
 from .config import DEFAULT_LOG_LEVEL
+from .config import load_logger_config
 from .config import DEFAULT_REQUEST_TIMEOUT
 from .config import DEFAULT_LOGGER_SERVER_URL
 
