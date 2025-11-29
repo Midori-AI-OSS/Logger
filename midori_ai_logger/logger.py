@@ -2,6 +2,7 @@
 
 import asyncio
 import aiohttp
+import atexit
 
 from typing import Any
 from typing import List
@@ -18,6 +19,48 @@ from .config import DEFAULT_LOGGER_SERVER_URL
 
 
 _GLOBAL_LOGGER_CONFIG = load_logger_config()
+
+# Module-level shared session for connection pooling
+_shared_session: Optional[aiohttp.ClientSession] = None
+_session_lock = asyncio.Lock()
+
+
+async def _get_shared_session() -> aiohttp.ClientSession:
+    """Get or create a shared aiohttp.ClientSession for connection reuse."""
+    global _shared_session
+    async with _session_lock:
+        if _shared_session is None or _shared_session.closed:
+            _shared_session = aiohttp.ClientSession()
+        return _shared_session
+
+
+async def close_logger_session() -> None:
+    """Close the shared aiohttp session. Call this before application shutdown."""
+    global _shared_session
+    async with _session_lock:
+        if _shared_session is not None and not _shared_session.closed:
+            await _shared_session.close()
+            _shared_session = None
+
+
+def _cleanup_session() -> None:
+    """Synchronous cleanup for atexit handler."""
+    global _shared_session
+    if _shared_session is not None and not _shared_session.closed:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_shared_session.close())
+        except Exception:
+            pass
+        _shared_session = None
+
+
+# Register cleanup on interpreter shutdown
+atexit.register(_cleanup_session)
 
 
 class MidoriAiLogger:
@@ -84,9 +127,9 @@ class MidoriAiLogger:
         if not self.logger_url:
             return
         try:
-            async with aiohttp.ClientSession() as session:
-                json_obj = {"level": mode, "logger": self.name, "message": f"{prefix}{message}"}
-                await session.post(f"{self.logger_url}/log", json=json_obj, timeout=self._request_timeout)
+            session = await _get_shared_session()
+            json_obj = {"level": mode, "logger": self.name, "message": f"{prefix}{message}"}
+            await session.post(f"{self.logger_url}/log", json=json_obj, timeout=self._request_timeout)
         except Exception:
             pass
 
@@ -118,4 +161,4 @@ class MidoriAiLogger:
         self._send_sync(prefix, message, mode)
 
 
-__all__ = ["MidoriAiLogger", "LogLevel"]
+__all__ = ["MidoriAiLogger", "LogLevel", "close_logger_session"]
