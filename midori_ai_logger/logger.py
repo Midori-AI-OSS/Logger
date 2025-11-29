@@ -22,13 +22,22 @@ _GLOBAL_LOGGER_CONFIG = load_logger_config()
 
 # Module-level shared session for connection pooling
 _shared_session: Optional[aiohttp.ClientSession] = None
-_session_lock = asyncio.Lock()
+_session_lock: Optional[asyncio.Lock] = None
+
+
+def _get_lock() -> asyncio.Lock:
+    """Get or create a lock for the current event loop."""
+    global _session_lock
+    if _session_lock is None:
+        _session_lock = asyncio.Lock()
+    return _session_lock
 
 
 async def _get_shared_session() -> aiohttp.ClientSession:
     """Get or create a shared aiohttp.ClientSession for connection reuse."""
     global _shared_session
-    async with _session_lock:
+    lock = _get_lock()
+    async with lock:
         if _shared_session is None or _shared_session.closed:
             _shared_session = aiohttp.ClientSession()
         return _shared_session
@@ -37,7 +46,8 @@ async def _get_shared_session() -> aiohttp.ClientSession:
 async def close_logger_session() -> None:
     """Close the shared aiohttp session. Call this before application shutdown."""
     global _shared_session
-    async with _session_lock:
+    lock = _get_lock()
+    async with lock:
         if _shared_session is not None and not _shared_session.closed:
             await _shared_session.close()
             _shared_session = None
@@ -51,10 +61,10 @@ def _cleanup_session() -> None:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(_shared_session.close())
-        except Exception:
+        except RuntimeError:
+            # Event loop is closed or cannot run
             pass
         _shared_session = None
 
